@@ -6,6 +6,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.*
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -20,11 +21,11 @@ class FloatingService : Service() {
     private var mp: MediaProjection? = null
     private var ir: ImageReader? = null
     private var vd: VirtualDisplay? = null
+    private var last: Image? = null
     private var notif = false
     private var tf = 1
     private var nm: NotificationManager? = null
     private val h = Handler(Looper.getMainLooper())
-    @Volatile private var want: ((Bitmap) -> Unit)? = null
 
     override fun onBind(i: Intent?): IBinder? = null
 
@@ -75,21 +76,13 @@ class FloatingService : Service() {
     private fun startCapture() {
         val dm = resources.displayMetrics
         val w = dm.widthPixels; val hh = dm.heightPixels
-        val reader = ImageReader.newInstance(w, hh, PixelFormat.RGBA_8888, 2)
+        val reader = ImageReader.newInstance(w, hh, PixelFormat.RGBA_8888, 3)
         ir = reader
         vd = mp?.createVirtualDisplay("cap", w, hh, dm.densityDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.surface, null, h)
         reader.setOnImageAvailableListener({ r ->
             val img = r.acquireLatestImage() ?: return@setOnImageAvailableListener
-            val cb = want
-            if (cb != null) {
-                want = null
-                val pl = img.planes[0]
-                val pad = pl.rowStride - pl.pixelStride * w
-                val bmp = Bitmap.createBitmap(w + pad / pl.pixelStride, hh, Bitmap.Config.ARGB_8888)
-                bmp.copyPixelsFromBuffer(pl.buffer)
-                cb(bmp)
-            }
-            img.close()
+            last?.close()
+            last = img
         }, h)
     }
 
@@ -108,7 +101,14 @@ class FloatingService : Service() {
     private fun scan() {
         if (!notif) box?.visibility = View.INVISIBLE
         h.postDelayed({
-            want = { bmp ->
+            val img = last
+            if (img == null) { show("❌ ক্যাপচার হয়নি, আবার চেষ্টা করুন"); return@postDelayed }
+            try {
+                val pl = img.planes[0]
+                val pad = pl.rowStride - pl.pixelStride * img.width
+                val bmp = Bitmap.createBitmap(img.width + pad / pl.pixelStride, img.height, Bitmap.Config.ARGB_8888)
+                pl.buffer.rewind()
+                bmp.copyPixelsFromBuffer(pl.buffer)
                 Thread {
                     val ls = Analyzer.analyze(bmp).lines()
                     val r = if (ls[0].startsWith("⬆") || ls[0].startsWith("⬇"))
@@ -116,8 +116,9 @@ class FloatingService : Service() {
                         else ls.joinToString("\n")
                     h.post { show(r) }
                 }.start()
+            } catch (e: Exception) {
+                show("❌ ছবি পড়া যায়নি, আবার চেষ্টা করুন")
             }
-            h.postDelayed({ if (want != null) { want = null; show("❌ ক্যাপচার হয়নি, আবার চেষ্টা করুন") } }, 3000)
         }, if (notif) 900L else 300L)
     }
 
@@ -157,7 +158,7 @@ class FloatingService : Service() {
 
     override fun onDestroy() {
         try { box?.let { wm?.removeView(it) } } catch (_: Exception) {}
-        vd?.release(); ir?.close(); mp?.stop()
+        last?.close(); vd?.release(); ir?.close(); mp?.stop()
         super.onDestroy()
     }
 }
