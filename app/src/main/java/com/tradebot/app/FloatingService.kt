@@ -11,6 +11,7 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.*
+import java.util.Locale
 
 class FloatingService : Service() {
     private var mp: MediaProjection? = null
@@ -35,6 +36,15 @@ class FloatingService : Service() {
         return if (t == 0) "খাতা খালি" else "জিত $w | হার $l | সঠিক ${w * 100 / t}%"
     }
 
+    private fun riskText(): String {
+        val r = getSharedPreferences("risk", MODE_PRIVATE)
+        val bal = r.getString("bal", "100")?.toDoubleOrNull() ?: 100.0
+        val pay = r.getString("pay", "90")?.toDoubleOrNull() ?: 90.0
+        val risk = r.getString("risk", "2")?.toDoubleOrNull() ?: 2.0
+        val s = bal * risk / 100
+        return String.format(Locale.US, "স্টেক: \$%.2f | জিতলে +\$%.2f | হারলে −\$%.2f", s, s * pay / 100, s)
+    }
+
     private fun cycle() {
         val l = listOf(1, 2, 3, 5, 15)
         tf = l[(l.indexOf(tf) + 1) % l.size]
@@ -43,7 +53,7 @@ class FloatingService : Service() {
     private fun note(): Notification =
         Notification.Builder(this, "bot").setContentTitle("Trade Bot চালু — সময়: $tf মিনিট")
             .setContentText(statText())
-            .setSmallIcon(android.R.drawable.ic_dialog_info).setOngoing(true)
+            .setSmallIcon(R.drawable.ic_bot).setOngoing(true)
             .addAction(act(android.R.drawable.ic_media_play, "স্ক্যান", "SCAN"))
             .addAction(act(android.R.drawable.ic_menu_recent_history, "সময়: ${tf}মি", "TF"))
             .addAction(act(android.R.drawable.ic_delete, "বন্ধ", "STOP")).build()
@@ -55,7 +65,7 @@ class FloatingService : Service() {
         nm?.notify(1, note())
         nm?.notify(3, Notification.Builder(this, "res")
             .setContentTitle(if (win) "✅ জিত সেভ হলো" else "❌ হার সেভ হলো")
-            .setContentText(statText()).setSmallIcon(android.R.drawable.ic_dialog_info).setTimeoutAfter(8000).build())
+            .setContentText(statText()).setSmallIcon(R.drawable.ic_bot).setTimeoutAfter(8000).build())
     }
 
     override fun onStartCommand(i: Intent?, f: Int, id: Int): Int {
@@ -97,10 +107,11 @@ class FloatingService : Service() {
     }
 
     private fun show(t: String, track: Boolean) {
-        val b = Notification.Builder(this, "res").setContentTitle(t.lines().first())
-            .setContentText(t.lines().drop(1).joinToString(" | "))
-            .setStyle(Notification.BigTextStyle().bigText(if (track) t + "\n\nট্রেড শেষে ফলাফল চাপুন\n" + statText() else t))
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+        val body = if (track) t + "\n" + riskText() else t
+        val b = Notification.Builder(this, "res").setContentTitle(body.lines().first())
+            .setContentText(body.lines().drop(1).joinToString(" | "))
+            .setStyle(Notification.BigTextStyle().bigText(if (track) body + "\n\nট্রেড শেষে ফলাফল চাপুন\n" + statText() else body))
+            .setSmallIcon(R.drawable.ic_bot)
         if (track) {
             b.addAction(act(android.R.drawable.ic_input_add, "✅ জিতলাম", "WIN"))
             b.addAction(act(android.R.drawable.ic_delete, "❌ হারলাম", "LOSS"))
