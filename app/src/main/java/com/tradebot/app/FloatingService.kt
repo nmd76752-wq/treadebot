@@ -21,6 +21,7 @@ class FloatingService : Service() {
     private var ir: ImageReader? = null
     private var vd: VirtualDisplay? = null
     private var notif = false
+    private var tf = 1
     private var nm: NotificationManager? = null
     private val h = Handler(Looper.getMainLooper())
     @Volatile private var want: ((Bitmap) -> Unit)? = null
@@ -30,24 +31,35 @@ class FloatingService : Service() {
     private fun pi(a: String) = PendingIntent.getService(this, a.hashCode(),
         Intent(this, FloatingService::class.java).setAction(a), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
+    private fun cycle() {
+        val l = listOf(1, 2, 3, 5, 15)
+        tf = l[(l.indexOf(tf) + 1) % l.size]
+    }
+
+    private fun note(): Notification {
+        val b = Notification.Builder(this, "bot").setContentTitle("Trade Bot চালু")
+            .setContentText(if (notif) "সময়: $tf মিনিট — স্ক্যান চাপুন" else "ভাসমান বট চলছে (সময়: $tf মিনিট)")
+            .setSmallIcon(android.R.drawable.ic_dialog_info).setOngoing(true)
+        if (notif) {
+            b.addAction(Notification.Action.Builder(android.R.drawable.ic_media_play, "স্ক্যান", pi("SCAN")).build())
+            b.addAction(Notification.Action.Builder(android.R.drawable.ic_menu_recent_history, "সময়: ${tf}মি", pi("TF")).build())
+            b.addAction(Notification.Action.Builder(android.R.drawable.ic_delete, "বন্ধ", pi("STOP")).build())
+        }
+        return b.build()
+    }
+
     override fun onStartCommand(i: Intent?, f: Int, id: Int): Int {
         when (i?.action) {
             "SCAN" -> { scan(); return START_NOT_STICKY }
             "STOP" -> { stopSelf(); return START_NOT_STICKY }
+            "TF" -> { cycle(); nm?.notify(1, note()); return START_NOT_STICKY }
         }
         val n0 = getSystemService(NotificationManager::class.java)
         nm = n0
         n0.createNotificationChannel(NotificationChannel("bot", "Bot", NotificationManager.IMPORTANCE_LOW))
         n0.createNotificationChannel(NotificationChannel("res", "Signal", NotificationManager.IMPORTANCE_HIGH))
         notif = i?.getBooleanExtra("notif", false) ?: false
-        val b = Notification.Builder(this, "bot").setContentTitle("Trade Bot চালু")
-            .setContentText(if (notif) "Quotex চার্টে গিয়ে স্ক্যান চাপুন" else "ভাসমান বট চলছে")
-            .setSmallIcon(android.R.drawable.ic_dialog_info).setOngoing(true)
-        if (notif) {
-            b.addAction(Notification.Action.Builder(android.R.drawable.ic_media_play, "স্ক্যান", pi("SCAN")).build())
-            b.addAction(Notification.Action.Builder(android.R.drawable.ic_delete, "বন্ধ", pi("STOP")).build())
-        }
-        startForeground(1, b.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        startForeground(1, note(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         val code = i?.getIntExtra("code", 0) ?: 0
         val data: Intent? = if (Build.VERSION.SDK_INT >= 33) i?.getParcelableExtra("data", Intent::class.java)
             else @Suppress("DEPRECATION") i?.getParcelableExtra("data")
@@ -98,7 +110,10 @@ class FloatingService : Service() {
         h.postDelayed({
             want = { bmp ->
                 Thread {
-                    val r = Analyzer.analyze(bmp)
+                    val ls = Analyzer.analyze(bmp).lines()
+                    val r = if (ls[0].startsWith("⬆") || ls[0].startsWith("⬇"))
+                        (listOf("${ls[0]} — $tf মিনিটের জন্য") + ls.drop(1)).joinToString("\n")
+                        else ls.joinToString("\n")
                     h.post { show(r) }
                 }.start()
             }
@@ -119,6 +134,10 @@ class FloatingService : Service() {
         out = tv
         val row = LinearLayout(this)
         row.addView(Button(this).apply { text = "স্ক্যান"; setOnClickListener { scan() } })
+        val tb = Button(this)
+        tb.text = "সময়: ${tf}মি"
+        tb.setOnClickListener { cycle(); tb.text = "সময়: ${tf}মি" }
+        row.addView(tb)
         row.addView(Button(this).apply { text = "বন্ধ"; setOnClickListener { stopSelf() } })
         bx.addView(tv); bx.addView(row)
         val p = WindowManager.LayoutParams(
