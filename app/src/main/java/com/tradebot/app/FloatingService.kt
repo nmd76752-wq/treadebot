@@ -11,18 +11,12 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.*
-import android.view.*
-import android.widget.*
 
 class FloatingService : Service() {
-    private var wm: WindowManager? = null
-    private var box: LinearLayout? = null
-    private var out: TextView? = null
     private var mp: MediaProjection? = null
     private var ir: ImageReader? = null
     private var vd: VirtualDisplay? = null
     private var last: Image? = null
-    private var notif = false
     private var tf = 1
     private var nm: NotificationManager? = null
     private val h = Handler(Looper.getMainLooper())
@@ -32,21 +26,36 @@ class FloatingService : Service() {
     private fun pi(a: String) = PendingIntent.getService(this, a.hashCode(),
         Intent(this, FloatingService::class.java).setAction(a), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
+    private fun act(icon: Int, title: String, a: String) = Notification.Action.Builder(icon, title, pi(a)).build()
+
+    private fun sp() = getSharedPreferences("stats", MODE_PRIVATE)
+
+    private fun statText(): String {
+        val w = sp().getInt("w", 0); val l = sp().getInt("l", 0); val t = w + l
+        return if (t == 0) "খাতা খালি" else "জিত $w | হার $l | সঠিক ${w * 100 / t}%"
+    }
+
     private fun cycle() {
         val l = listOf(1, 2, 3, 5, 15)
         tf = l[(l.indexOf(tf) + 1) % l.size]
     }
 
-    private fun note(): Notification {
-        val b = Notification.Builder(this, "bot").setContentTitle("Trade Bot চালু")
-            .setContentText(if (notif) "সময়: $tf মিনিট — স্ক্যান চাপুন" else "ভাসমান বট চলছে (সময়: $tf মিনিট)")
+    private fun note(): Notification =
+        Notification.Builder(this, "bot").setContentTitle("Trade Bot চালু — সময়: $tf মিনিট")
+            .setContentText(statText())
             .setSmallIcon(android.R.drawable.ic_dialog_info).setOngoing(true)
-        if (notif) {
-            b.addAction(Notification.Action.Builder(android.R.drawable.ic_media_play, "স্ক্যান", pi("SCAN")).build())
-            b.addAction(Notification.Action.Builder(android.R.drawable.ic_menu_recent_history, "সময়: ${tf}মি", pi("TF")).build())
-            b.addAction(Notification.Action.Builder(android.R.drawable.ic_delete, "বন্ধ", pi("STOP")).build())
-        }
-        return b.build()
+            .addAction(act(android.R.drawable.ic_media_play, "স্ক্যান", "SCAN"))
+            .addAction(act(android.R.drawable.ic_menu_recent_history, "সময়: ${tf}মি", "TF"))
+            .addAction(act(android.R.drawable.ic_delete, "বন্ধ", "STOP")).build()
+
+    private fun record(win: Boolean) {
+        val k = if (win) "w" else "l"
+        sp().edit().putInt(k, sp().getInt(k, 0) + 1).apply()
+        nm?.cancel(2)
+        nm?.notify(1, note())
+        nm?.notify(3, Notification.Builder(this, "res")
+            .setContentTitle(if (win) "✅ জিত সেভ হলো" else "❌ হার সেভ হলো")
+            .setContentText(statText()).setSmallIcon(android.R.drawable.ic_dialog_info).setTimeoutAfter(8000).build())
     }
 
     override fun onStartCommand(i: Intent?, f: Int, id: Int): Int {
@@ -54,12 +63,14 @@ class FloatingService : Service() {
             "SCAN" -> { scan(); return START_NOT_STICKY }
             "STOP" -> { stopSelf(); return START_NOT_STICKY }
             "TF" -> { cycle(); nm?.notify(1, note()); return START_NOT_STICKY }
+            "WIN" -> { record(true); return START_NOT_STICKY }
+            "LOSS" -> { record(false); return START_NOT_STICKY }
+            "SKIP" -> { nm?.cancel(2); return START_NOT_STICKY }
         }
         val n0 = getSystemService(NotificationManager::class.java)
         nm = n0
         n0.createNotificationChannel(NotificationChannel("bot", "Bot", NotificationManager.IMPORTANCE_LOW))
         n0.createNotificationChannel(NotificationChannel("res", "Signal", NotificationManager.IMPORTANCE_HIGH))
-        notif = i?.getBooleanExtra("notif", false) ?: false
         startForeground(1, note(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         val code = i?.getIntExtra("code", 0) ?: 0
         val data: Intent? = if (Build.VERSION.SDK_INT >= 33) i?.getParcelableExtra("data", Intent::class.java)
@@ -69,7 +80,6 @@ class FloatingService : Service() {
         mp = m.getMediaProjection(code, data)
         mp?.registerCallback(object : MediaProjection.Callback() { override fun onStop() { stopSelf() } }, h)
         startCapture()
-        if (!notif) showBubble()
         return START_NOT_STICKY
     }
 
@@ -86,23 +96,23 @@ class FloatingService : Service() {
         }, h)
     }
 
-    private fun show(t: String) {
-        if (notif) {
-            val n = Notification.Builder(this, "res").setContentTitle(t.lines().first())
-                .setContentText(t.lines().drop(1).joinToString(" | "))
-                .setStyle(Notification.BigTextStyle().bigText(t))
-                .setSmallIcon(android.R.drawable.ic_dialog_info).setTimeoutAfter(30000).build()
-            nm?.notify(2, n)
-        } else {
-            out?.text = t; box?.visibility = View.VISIBLE
-        }
+    private fun show(t: String, track: Boolean) {
+        val b = Notification.Builder(this, "res").setContentTitle(t.lines().first())
+            .setContentText(t.lines().drop(1).joinToString(" | "))
+            .setStyle(Notification.BigTextStyle().bigText(if (track) t + "\n\nট্রেড শেষে ফলাফল চাপুন\n" + statText() else t))
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+        if (track) {
+            b.addAction(act(android.R.drawable.ic_input_add, "✅ জিতলাম", "WIN"))
+            b.addAction(act(android.R.drawable.ic_delete, "❌ হারলাম", "LOSS"))
+            b.addAction(act(android.R.drawable.ic_menu_close_clear_cancel, "বাদ", "SKIP"))
+        } else b.setTimeoutAfter(30000)
+        nm?.notify(2, b.build())
     }
 
     private fun scan() {
-        if (!notif) box?.visibility = View.INVISIBLE
         h.postDelayed({
             val img = last
-            if (img == null) { show("❌ ক্যাপচার হয়নি, আবার চেষ্টা করুন"); return@postDelayed }
+            if (img == null) { show("❌ ক্যাপচার হয়নি, আবার চেষ্টা করুন", false); return@postDelayed }
             try {
                 val pl = img.planes[0]
                 val pad = pl.rowStride - pl.pixelStride * img.width
@@ -111,53 +121,17 @@ class FloatingService : Service() {
                 bmp.copyPixelsFromBuffer(pl.buffer)
                 Thread {
                     val ls = Analyzer.analyze(bmp).lines()
-                    val r = if (ls[0].startsWith("⬆") || ls[0].startsWith("⬇"))
-                        (listOf("${ls[0]} — $tf মিনিটের জন্য") + ls.drop(1)).joinToString("\n")
-                        else ls.joinToString("\n")
-                    h.post { show(r) }
+                    val sig = ls[0].startsWith("⬆") || ls[0].startsWith("⬇")
+                    val r = if (sig) (listOf("${ls[0]} — $tf মিনিটের জন্য") + ls.drop(1)).joinToString("\n") else ls.joinToString("\n")
+                    h.post { show(r, sig) }
                 }.start()
             } catch (e: Exception) {
-                show("❌ ছবি পড়া যায়নি, আবার চেষ্টা করুন")
+                show("❌ ছবি পড়া যায়নি, আবার চেষ্টা করুন", false)
             }
-        }, if (notif) 900L else 300L)
-    }
-
-    private fun showBubble() {
-        val w0 = getSystemService(WINDOW_SERVICE) as WindowManager
-        wm = w0
-        val bx = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.argb(225, 20, 20, 30))
-            setPadding(24, 24, 24, 24)
-        }
-        box = bx
-        val tv = TextView(this).apply { text = "🤖 প্রস্তুত (এখানে ধরে টানুন)"; setTextColor(Color.WHITE); textSize = 15f }
-        out = tv
-        val row = LinearLayout(this)
-        row.addView(Button(this).apply { text = "স্ক্যান"; setOnClickListener { scan() } })
-        val tb = Button(this)
-        tb.text = "সময়: ${tf}মি"
-        tb.setOnClickListener { cycle(); tb.text = "সময়: ${tf}মি" }
-        row.addView(tb)
-        row.addView(Button(this).apply { text = "বন্ধ"; setOnClickListener { stopSelf() } })
-        bx.addView(tv); bx.addView(row)
-        val p = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT)
-        p.gravity = Gravity.TOP or Gravity.START; p.x = 20; p.y = 200
-        var sx = 0; var sy = 0; var tx = 0f; var ty = 0f
-        tv.setOnTouchListener { _, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> { sx = p.x; sy = p.y; tx = e.rawX; ty = e.rawY }
-                MotionEvent.ACTION_MOVE -> { p.x = sx + (e.rawX - tx).toInt(); p.y = sy + (e.rawY - ty).toInt(); w0.updateViewLayout(bx, p) }
-            }
-            true
-        }
-        w0.addView(bx, p)
+        }, 900L)
     }
 
     override fun onDestroy() {
-        try { box?.let { wm?.removeView(it) } } catch (_: Exception) {}
         last?.close(); vd?.release(); ir?.close(); mp?.stop()
         super.onDestroy()
     }
