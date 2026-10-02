@@ -120,6 +120,17 @@ class FloatingService : Service() {
         nm?.notify(2, b.build())
     }
 
+    private fun entryText(): String {
+        val c = java.util.Calendar.getInstance()
+        val mins = c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
+        val secs = c.get(java.util.Calendar.SECOND)
+        var nxt = (mins / tf + 1) * tf
+        var left = (nxt - mins) * 60 - secs
+        if (left < 10) { nxt += tf; left += tf * 60 }
+        val hh = (nxt / 60) % 24; val mm = nxt % 60
+        return String.format(Locale.US, "⏰ এন্ট্রি টাইম: %02d:%02d (বাকি %d মিনিট %d সেকেন্ড)", hh, mm, left / 60, left % 60)
+    }
+
     private fun scan() {
         h.postDelayed({
             val img = last
@@ -134,7 +145,7 @@ class FloatingService : Service() {
                     val ls = Analyzer.analyze(bmp).lines()
                     val sig = ls[0].startsWith("⬆") || ls[0].startsWith("⬇")
                     val r = if (sig) (listOf("${ls[0]} — $tf মিনিটের জন্য") + ls.drop(1)).joinToString("\n") else ls.joinToString("\n")
-                    h.post { show(r, sig) }
+                    h.post { show(if (sig) r.replaceFirst("\n", "\n" + entryText() + "\n") else r, sig) }
                 }.start()
             } catch (e: Exception) {
                 show("❌ ছবি পড়া যায়নি, আবার চেষ্টা করুন", false)
