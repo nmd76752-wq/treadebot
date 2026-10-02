@@ -90,7 +90,7 @@ class MainActivity : Activity() {
         })
         hd.addView(tv("Trade Scanner", 26f, TXT, true))
         root.addView(hd)
-        root.addView(tv("চার্ট স্ক্যান করুন, সিগনাল দেখুন, ঝুঁকি মাপুন", 13f, MUTE).apply { setPadding(0, dp(6), 0, dp(18)) })
+        root.addView(tv("চার্ট স্ক্যান করুন, সিগনাল দেখুন, স্টেক মাপুন", 13f, MUTE).apply { setPadding(0, dp(6), 0, dp(18)) })
 
         val sc = card()
         sc.addView(tv("রেজাল্ট খাতা", 13f, MUTE))
@@ -107,11 +107,11 @@ class MainActivity : Activity() {
         })
 
         val rc = card()
-        rc.addView(tv("রিস্ক ক্যালকুলেটর", 13f, MUTE).apply { setPadding(0, 0, 0, dp(10)) })
+        rc.addView(tv("ট্রেডিং ক্যালকুলেটর", 13f, MUTE).apply { setPadding(0, 0, 0, dp(10)) })
         val row = LinearLayout(this)
         val f1 = field("ব্যালেন্স (\$)", "bal", "100")
         val f2 = field("পেআউট (%)", "pay", "90")
-        val f3 = field("ঝুঁকি (%)", "risk", "2")
+        val f3 = field("ট্রেডিং এমাউন্ট (\$)", "amt", "1")
         eb = f1.second; ep = f2.second; er = f3.second
         row.addView(f1.first); row.addView(f2.first); row.addView(f3.first)
         rc.addView(row)
@@ -150,7 +150,11 @@ class MainActivity : Activity() {
         refresh()
     }
 
-    override fun onResume() { super.onResume(); refresh() }
+    override fun onResume() {
+        super.onResume()
+        eb.setText(getSharedPreferences("risk", MODE_PRIVATE).getString("bal", "100"))
+        refresh()
+    }
 
     private fun f(d: Double) = String.format(Locale.US, "%.2f", d)
 
@@ -159,7 +163,8 @@ class MainActivity : Activity() {
         val w = s.getInt("w", 0); val l = s.getInt("l", 0); val t = w + l
         val bal = eb.text.toString().toDoubleOrNull()
         val pay = ep.text.toString().toDoubleOrNull()
-        val risk = er.text.toString().toDoubleOrNull()
+        val amt = er.text.toString().toDoubleOrNull()
+        val risk = if (amt != null && bal != null && bal > 0) amt * 100 / bal else null
         val be = if (pay != null && pay > 0) 100 / (1 + pay / 100) else 52.6
 
         if (t == 0) {
@@ -179,13 +184,13 @@ class MainActivity : Activity() {
             stakeV.text = "—"; detV.text = "সংখ্যাগুলো ঠিকভাবে লিখুন"; return
         }
         getSharedPreferences("risk", MODE_PRIVATE).edit()
-            .putString("bal", eb.text.toString()).putString("pay", ep.text.toString()).putString("risk", er.text.toString()).apply()
+            .putString("bal", eb.text.toString()).putString("pay", ep.text.toString()).putString("amt", er.text.toString()).apply()
         val stake = bal * risk / 100
         val profit = stake * pay / 100
         val half = Math.ceil(Math.log(0.5) / Math.log(1 - risk / 100)).toInt()
         stakeV.text = "স্টেক \$${f(stake)}"
         var o = "জিতলে লাভ  +\$${f(profit)}\nহারলে লস  −\$${f(stake)}\nব্রেক-ইভেন হার  ${f(be)}%\nব্যালেন্স অর্ধেক হতে টানা $half হার"
-        if (risk > 5) o += "\n⚠️ ঝুঁকি ৫%-এর বেশি"
+        if (risk > 5) o += "\n⚠️ এমাউন্ট ব্যালেন্সের ৫%-এর বেশি"
         detV.text = o
         detV.setTextColor(MUTE)
     }

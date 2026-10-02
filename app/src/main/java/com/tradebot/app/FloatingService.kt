@@ -36,13 +36,17 @@ class FloatingService : Service() {
         return if (t == 0) "খাতা খালি" else "জিত $w | হার $l | সঠিক ${w * 100 / t}%"
     }
 
+    private val maxS = 2
+    private fun rp() = getSharedPreferences("risk", MODE_PRIVATE)
+    private fun balNow(): Double = rp().getString("bal", "100")?.toDoubleOrNull() ?: 100.0
+    private fun amtNow(): Double = rp().getString("amt", "1")?.toDoubleOrNull() ?: 1.0
+    private fun payNow(): Double = rp().getString("pay", "90")?.toDoubleOrNull() ?: 90.0
+    private fun stakeNow(): Double = minOf(amtNow() * Math.pow(2.0, sp().getInt("streak", 0).toDouble()), balNow())
+
     private fun riskText(): String {
-        val r = getSharedPreferences("risk", MODE_PRIVATE)
-        val bal = r.getString("bal", "100")?.toDoubleOrNull() ?: 100.0
-        val pay = r.getString("pay", "90")?.toDoubleOrNull() ?: 90.0
-        val risk = r.getString("risk", "2")?.toDoubleOrNull() ?: 2.0
-        val s = bal * risk / 100
-        return String.format(Locale.US, "স্টেক: \$%.2f | জিতলে +\$%.2f | হারলে −\$%.2f", s, s * pay / 100, s)
+        val st = sp().getInt("streak", 0)
+        val s = stakeNow()
+        return String.format(Locale.US, "🔁 মার্টিনগেল ধাপ: %d/%d\nস্টেক: \$%.2f | জিতলে +\$%.2f | হারলে −\$%.2f\n💰 ব্যালেন্স: \$%.2f", st + 1, maxS + 1, s, s * payNow() / 100, s, balNow())
     }
 
     private fun cycle() {
@@ -60,6 +64,11 @@ class FloatingService : Service() {
 
     private fun record(win: Boolean) {
         val k = if (win) "w" else "l"
+        val stake0 = stakeNow()
+        val nb = if (win) balNow() + stake0 * payNow() / 100 else balNow() - stake0
+        rp().edit().putString("bal", String.format(Locale.US, "%.2f", maxOf(nb, 0.0))).apply()
+        val ns = if (win) 0 else sp().getInt("streak", 0) + 1
+        sp().edit().putInt("streak", if (ns > maxS) 0 else ns).apply()
         sp().edit().putInt(k, sp().getInt(k, 0) + 1).apply()
         nm?.cancel(2)
         nm?.notify(1, note())
